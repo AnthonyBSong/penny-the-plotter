@@ -27,7 +27,7 @@ class datasender():
         self._sock.close()
     
 if __name__ == "__main__":
-    temp_datasender = datasender("x", 5005)
+    temp_datasender = datasender("172.20.10.5", 5005)
     for i in range(100):
         temp_datasender.forward(str(i))
         time.sleep(1)
