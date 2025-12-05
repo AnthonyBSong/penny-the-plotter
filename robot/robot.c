@@ -12,6 +12,7 @@
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
 #include "hardware/uart.h"
+#include "hardware/pwm.h"
 #include "stdio.h"
 
 #include "pico/stdlib.h"
@@ -29,32 +30,167 @@
 // ======================================
 // udp constants
 #define UDP_PORT 5555
-#define UDP_MSG_LEN_MAX 32
-#define UDP_TARGET "10.120.64.63" // my laptop addresss
+#define UDP_MSG_LEN_MAX 64
+#define UDP_TARGET "10.59.35.63" // my laptop addresss
 #define UDP_INTERVAL_MS 10
+
+// ======================================
+// Motor Control Pin Definitions
+// ======================================
+
+// -------- Module A (Left Swerve Module) --------
+#define EN_A1   15
+#define IN1_A1  14
+#define IN2_A1  13
+
+#define EN_A2   10
+#define IN1_A2  12
+#define IN2_A2  11
+
+// -------- Module B (Right Swerve Module) --------
+#define EN_B1   16
+#define IN1_B1  17
+#define IN2_B1  18
+
+#define EN_B2   19
+#define IN1_B2  20
+#define IN2_B2  21
+
+// PWM duty cycle max
+#define MAX_DUTY 500
+
+// ======================================
+// Motor Control Helper Functions
+// ======================================
+
+void pwm_setup(uint pin) {
+    gpio_set_function(pin, GPIO_FUNC_PWM);
+    uint slice = pwm_gpio_to_slice_num(pin);
+    pwm_set_wrap(slice, MAX_DUTY);
+    pwm_set_clkdiv(slice, 100.0f);   // ~1 kHz PWM
+    pwm_set_enabled(slice, true);
+}
+
+void motor_set(int in1, int in2, int en, int duty) {
+    gpio_put(in1, duty > 0);
+    gpio_put(in2, duty < 0);
+    uint slice = pwm_gpio_to_slice_num(en);
+    uint level = abs(duty);
+    if (level > MAX_DUTY) level = MAX_DUTY;
+    pwm_set_chan_level(slice, pwm_gpio_to_channel(en), level);
+}
+
+void stop_motor(int in1, int in2, int en) {
+    gpio_put(in1, 0);
+    gpio_put(in2, 0);
+    uint slice = pwm_gpio_to_slice_num(en);
+    pwm_set_chan_level(slice, pwm_gpio_to_channel(en), 0);
+}
+
+// ======================================
+// Module Motor Control Functions
+// ======================================
+
+// ---------- MODULE A (Left) ----------
+void moduleA_motor1(int duty) { motor_set(IN1_A1, IN2_A1, EN_A1, duty); }
+void moduleA_motor2(int duty) { motor_set(IN1_A2, IN2_A2, EN_A2, duty); }
+
+void moduleA_stop() {
+    stop_motor(IN1_A1, IN2_A1, EN_A1);
+    stop_motor(IN1_A2, IN2_A2, EN_A2);
+}
+
+// ---------- MODULE B (Right) ----------
+void moduleB_motor1(int duty) { motor_set(IN1_B1, IN2_B1, EN_B1, duty); }
+void moduleB_motor2(int duty) { motor_set(IN1_B2, IN2_B2, EN_B2, duty); }
+
+void moduleB_stop() {
+    stop_motor(IN1_B1, IN2_B1, EN_B1);
+    stop_motor(IN1_B2, IN2_B2, EN_B2);
+}
+
+// ======================================
+// High-Level Swerve Commands
+// ======================================
+// Differential swerve math:
+//   wheel_speed  = (m1 - m2)
+//   steering_yaw = (m1 + m2)
+
+void moduleA_set(int wheel_cmd, int yaw_cmd) {
+    int m1 = yaw_cmd + wheel_cmd;
+    int m2 = yaw_cmd - wheel_cmd;
+    moduleA_motor1(m1);
+    moduleA_motor2(m2);
+}
+
+void moduleB_set(int wheel_cmd, int yaw_cmd) {
+    int m1 = yaw_cmd + wheel_cmd;
+    int m2 = yaw_cmd - wheel_cmd;
+    moduleB_motor1(m1);
+    moduleB_motor2(m2);
+}
+
+// ======================================
+// Whole Robot Movement Commands
+// ======================================
+
+void robot_drive(int linear, int angular) {
+    // linear: positive=forward, negative=backward
+    // angular: positive=left, negative=right
+    moduleA_set(linear, angular);
+    moduleB_set(linear, angular);
+}
+
+void robot_forward(int speed) {
+    moduleA_set(+speed, 0);
+    moduleB_set(+speed, 0);
+}
+
+void robot_backward(int speed) {
+    moduleA_set(-speed, 0);
+    moduleB_set(-speed, 0);
+}
+
+void robot_rotate_left(int yaw) {
+    moduleA_set(0, +yaw);
+    moduleB_set(0, +yaw);
+}
+
+void robot_rotate_right(int yaw) {
+    moduleA_set(0, -yaw);
+    moduleB_set(0, -yaw);
+}
+
+void robot_stop() {
+    moduleA_stop();
+    moduleB_stop();
+}
 
 // =======================================
 // necessary to connect to wireless
 // !!! Do NOT post this info !!!
-#define WIFI_SSID "xxx"
-#define WIFI_PASSWORD "xxx"
+#define WIFI_SSID "Anthony"
+#define WIFI_PASSWORD "OnUv2NjT"
 
 // =======================================
 // protothreads and thread communication
 char recv_data[UDP_MSG_LEN_MAX];
 
-// payload to led blink
-int blink_time ;
-// interthread communicaitqoin
-struct pt_sem new_udp_recv_s, new_udp_send_s ;
+// Motor command values (from UDP)
+// Format: "<linear_speed> <angular_speed>"
+// linear_speed:  -500 to 500 (negative=backward, positive=forward)
+// angular_speed: -500 to 500 (negative=right, positive=left)
+volatile int linear_cmd = 0;
+volatile int angular_cmd = 0;
 
-//==================================================
-// UDP async receive callback setup
-// NOTE that udpecho_raw_recv is triggered by a signal
-// directly from the LWIP package -- not from your code
-// this callback juswt copies out the packet string
-// and sets a "new data" flag
-// This runs in an ISR -- KEEP IT SHORT!!!
+// Debug/stats tracking
+volatile uint32_t packets_received = 0;
+volatile uint32_t packets_sent = 0;
+volatile uint32_t parse_errors = 0;
+volatile uint32_t last_recv_time_ms = 0;
+
+// interthread communication
+struct pt_sem new_udp_recv_s, new_udp_send_s ;
 
 #if LWIP_UDP
 
@@ -119,8 +255,6 @@ static PT_THREAD (protothread_udp_send(struct pt *pt))
 
     static ip_addr_t addr;
     ipaddr_aton(UDP_TARGET, &addr);
-
-    static int counter = 0;
     
     while (true) {
         
@@ -129,31 +263,28 @@ static PT_THREAD (protothread_udp_send(struct pt *pt))
         struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, UDP_MSG_LEN_MAX+1, PBUF_RAM);
         char *req = (char *)p->payload;
         memset(req, 0, UDP_MSG_LEN_MAX+1);
-        //
-        sprintf(req, "blink time = %d mSec", blink_time);
-        err_t er = udp_sendto(pcb, p, &addr, UDP_PORT); //port
+        
+        // Send debug info: seq#, motor cmds, uptime, stats
+        uint32_t uptime_ms = to_ms_since_boot(get_absolute_time());
+        sprintf(req, "%lu|%d,%d|rx:%lu,err:%lu", 
+                packets_sent,           // packet sequence number
+                linear_cmd, angular_cmd, // current motor commands
+                packets_received,        // total packets received
+                parse_errors);           // parse error count
+        
+        err_t er = udp_sendto(pcb, p, &addr, UDP_PORT);
        
         pbuf_free(p);
         if (er != ERR_OK) {
-            printf("Failed to send UDP packet! error=%d", er);
+            printf("UDP send error=%d\n", er);
         } else {
-            printf("Sent packet %d\n", counter);
-            counter++;
+            packets_sent++;
         }
 
-        // Note in practice for this simple UDP transmitter,
-        // the end result for both background and poll is the same
-    
 #if PICO_CYW43_ARCH_POLL
-        // if you are using pico_cyw43_arch_poll, then you must poll periodically from your
-        // main loop (not from a timer) to check for Wi-Fi driver or lwIP work that needs to be done.
         cyw43_arch_poll();
         sleep_ms(BEACON_INTERVAL_MS);
 #else
-        // if you are not using pico_cyw43_arch_poll, then WiFI driver and lwIP work
-        // is done via interrupt in the background. This sleep is just an example of some (blocking)
-        // work you might be doing.
-
         PT_YIELD_usec(UDP_INTERVAL_MS*1000);
 #endif
     }
@@ -162,62 +293,109 @@ static PT_THREAD (protothread_udp_send(struct pt *pt))
 }
 
 // ==================================================
-// udp recv processing
+// udp recv processing - parses motor commands
+// Format: "<linear_speed> <angular_speed>"
 // ==================================================
 static PT_THREAD (protothread_udp_recv(struct pt *pt))
 {
     PT_BEGIN(pt);
     
-     // data structure for interval timer
-     PT_INTERVAL_INIT() ;
+    // data structure for interval timer
+    PT_INTERVAL_INIT() ;
 
-      while(1) {
+    while(1) {
         // wait for new packet
-        // MUST be an integer format number!!
         PT_SEM_WAIT(pt, &new_udp_recv_s) ;
+        
+        packets_received++;
+        last_recv_time_ms = to_ms_since_boot(get_absolute_time());
 
-        // process packet and signal udp send thread
-        sscanf(recv_data, "%d", &blink_time) ;  
-       // tell send threead 
+        // Parse motor command: "linear angular"
+        int new_linear = 0, new_angular = 0;
+        int parsed = sscanf(recv_data, "%d %d", &new_linear, &new_angular);
+        
+        if (parsed == 2) {
+            // Clamp values to valid range
+            if (new_linear > MAX_DUTY) new_linear = MAX_DUTY;
+            if (new_linear < -MAX_DUTY) new_linear = -MAX_DUTY;
+            if (new_angular > MAX_DUTY) new_angular = MAX_DUTY;
+            if (new_angular < -MAX_DUTY) new_angular = -MAX_DUTY;
+            
+            linear_cmd = new_linear;
+            angular_cmd = new_angular;
+            
+            // Apply motor commands
+            robot_drive(linear_cmd, angular_cmd);
+            
+            printf("[RX] lin=%d ang=%d\n", linear_cmd, angular_cmd);
+        } else {
+            parse_errors++;
+            printf("[ERR] Bad packet: '%s' (parsed %d)\n", recv_data, parsed);
+        }
+        
+        // tell send thread to acknowledge
         PT_SEM_SIGNAL(pt, &new_udp_send_s) ;
 
         PT_YIELD_INTERVAL(10) ;
         //
         // NEVER exit while
-      } // END WHILE(1)
+    } // END WHILE(1)
     PT_END(pt);
-} // blink thread
+} // motor command thread
 
 // ==================================================
 // toggle cyw43 LED  
-// this is really just a test of multitasking
-// compatability with LWIP
+// Heartbeat indicator - blinks to show system is alive
 // ==================================================
 static PT_THREAD (protothread_toggle_cyw43(struct pt *pt))
 {
     PT_BEGIN(pt);
     static bool LED_state = false ;
     //
-     // data structure for interval timer
-     PT_INTERVAL_INIT() ;
-     // set some default blink time
-     blink_time = 100 ;
-     // echo the default time to udp connection
-      PT_SEM_SIGNAL(pt, &new_udp_send_s) ;
+    // data structure for interval timer
+    PT_INTERVAL_INIT() ;
 
-      while(1) {
+    while(1) {
         //
         LED_state = !LED_state ;
         // the onboard LED is attached to the wifi module
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, LED_state);
-        // blink time is modifed by the udp recv thread
-        PT_YIELD_INTERVAL(blink_time*1000) ;
+        // Fixed 500ms blink as heartbeat
+        PT_YIELD_INTERVAL(500000) ;
         //
         // NEVER exit while
-      } // END WHILE(1)
+    } // END WHILE(1)
     PT_END(pt);
-} // blink thread
+} // heartbeat thread
 
+
+// ====================================================
+// Motor GPIO/PWM initialization
+// ====================================================
+void motor_init() {
+    // All motor control pins
+    int all_pins[] = {
+        EN_A1, IN1_A1, IN2_A1,
+        EN_A2, IN1_A2, IN2_A2,
+        EN_B1, IN1_B1, IN2_B1,
+        EN_B2, IN1_B2, IN2_B2
+    };
+
+    // Configure all pins as outputs
+    for (int i = 0; i < 12; i++) {
+        gpio_init(all_pins[i]);
+        gpio_set_dir(all_pins[i], GPIO_OUT);
+    }
+
+    // Setup PWM for EN pins
+    pwm_setup(EN_A1);
+    pwm_setup(EN_A2);
+    pwm_setup(EN_B1);
+    pwm_setup(EN_B2);
+    
+    // Start with motors stopped
+    robot_stop();
+}
 
 // ====================================================
 int main() {
@@ -226,9 +404,14 @@ int main() {
     stdio_init_all();
 
   // =======================
+  // init the motors
+    motor_init();
+    printf("Motors initialized\n");
+
+  // =======================
   // init the wifi network
     if (cyw43_arch_init()) {
-        printf(pt_serial_out_buffer, "failed to initialise cyw43\n");
+        printf("failed to initialise cyw43\n");
         return 1;
     }
 
@@ -244,7 +427,7 @@ int main() {
     }
 
     //============================
-    // UDP recenve ISR routines
+    // UDP receive ISR routines
     udpecho_raw_init();
 
       //========================================

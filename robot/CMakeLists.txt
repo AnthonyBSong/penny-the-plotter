@@ -40,6 +40,7 @@ target_link_libraries(robot
     pico_stdlib
     pico_bootsel_via_double_reset
     hardware_sync
+    hardware_pwm
     pico_sync
 )
 
