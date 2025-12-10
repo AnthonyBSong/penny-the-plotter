@@ -40,9 +40,4 @@
 # debug information files
 *.dwo
 
-local_host/calib/
-local_host/camera_mtx.npy
-local_host/camera_dist.npy
-local_host/camera_mtx.npy.gz
-local_host/camera_dist.npy.gz
-local_host/__pycache__/
+local_host/

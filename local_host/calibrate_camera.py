@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import glob
 
-CHECKERBOARD = (9, 6)  # (cols, rows) of INNER corners
+CHECKERBOARD = (8, 6)  # (cols, rows) of INNER corners
 
 IMAGE_DIR = "calib/*.jpg"
 

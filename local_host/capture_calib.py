@@ -1,9 +1,11 @@
 # capture_calib_images.py
 import cv2
 import os
+import numpy as np
 
 SAVE_DIR = "calib"       # folder to save images
 CAM_INDEX = 0            # 0 = default camera
+CHECKERBOARD = (8, 6)    # (cols, rows) of INNER corners - must match calibrate_camera.py
 
 def main():
     os.makedirs(SAVE_DIR, exist_ok=True)

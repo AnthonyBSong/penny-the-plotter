@@ -34,18 +34,28 @@ class datasender():
 
 if __name__ == "__main__":
     # Example usage with robot instructions
-    sender = datasender("10.59.35.104", 5555)
+    sender = datasender("10.59.35.74", 5555)
     
     print("Testing robot commands...")
     
-    # Test forward
-    print("Forward...")
-    sender.robot.rotate_left(300)
-    time.sleep(2)
+    move_time = time.time()
+    curr_time = time.time()
 
-    # Test stop
-    print("Stop...")
-    sender.robot.stop()
+    # Test forward
+    while (curr_time - move_time < 2):
+        print("Forward...")
+        sender.robot.move_forward(500)
+        curr_time = time.time()
+        time.sleep(0.5)
+
+    stop_time = time.time()
+
+    # Test forward
+    while (curr_time - stop_time < 2):
+        print("Stop...")
+        sender.robot.stop()  
+        curr_time = time.time()
+        time.sleep(0.5)
     
     sender.close()
     print("Done!")

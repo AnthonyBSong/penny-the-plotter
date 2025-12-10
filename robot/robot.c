@@ -7,6 +7,7 @@
 // Standard libraries
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <pico/multicore.h>
 #include "hardware/sync.h"
 #include "hardware/gpio.h"
@@ -39,22 +40,22 @@
 // ======================================
 
 // -------- Module A (Left Swerve Module) --------
-#define EN_A1   15
-#define IN1_A1  14
-#define IN2_A1  13
+#define EN_A1   10
+#define IN1_A1  11
+#define IN2_A1  12
 
-#define EN_A2   10
-#define IN1_A2  12
-#define IN2_A2  11
+#define EN_A2   13
+#define IN1_A2  14
+#define IN2_A2  15
 
 // -------- Module B (Right Swerve Module) --------
-#define EN_B1   16
-#define IN1_B1  17
+#define EN_B1   26
+#define IN1_B1  19
 #define IN2_B1  18
 
-#define EN_B2   19
-#define IN1_B2  20
-#define IN2_B2  21
+// L9110H motor driver for B2 (no enable pin, uses IA/IB for direction + PWM)
+#define IA_B2   4
+#define IB_B2   5
 
 // PWM duty cycle max
 #define MAX_DUTY 500
@@ -87,6 +88,36 @@ void stop_motor(int in1, int in2, int en) {
     pwm_set_chan_level(slice, pwm_gpio_to_channel(en), 0);
 }
 
+// L9110H motor control: PWM on IA for forward, PWM on IB for reverse
+void l9110h_motor_set(int ia_pin, int ib_pin, int duty) {
+    uint slice_ia = pwm_gpio_to_slice_num(ia_pin);
+    uint slice_ib = pwm_gpio_to_slice_num(ib_pin);
+    uint level = abs(duty);
+    if (level > MAX_DUTY) level = MAX_DUTY;
+    
+    if (duty > 0) {
+        // Forward: PWM on IA, LOW on IB
+        pwm_set_chan_level(slice_ia, pwm_gpio_to_channel(ia_pin), level);
+        pwm_set_chan_level(slice_ib, pwm_gpio_to_channel(ib_pin), 0);
+    } else if (duty < 0) {
+        // Reverse: LOW on IA, PWM on IB
+        pwm_set_chan_level(slice_ia, pwm_gpio_to_channel(ia_pin), 0);
+        pwm_set_chan_level(slice_ib, pwm_gpio_to_channel(ib_pin), level);
+    } else {
+        // Brake mode: both HIGH to actively stop
+        pwm_set_chan_level(slice_ia, pwm_gpio_to_channel(ia_pin), MAX_DUTY);
+        pwm_set_chan_level(slice_ib, pwm_gpio_to_channel(ib_pin), MAX_DUTY);
+    }
+}
+
+void l9110h_motor_stop(int ia_pin, int ib_pin) {
+    // Brake mode: set both pins to full duty (HIGH) to actively stop the motor
+    uint slice_ia = pwm_gpio_to_slice_num(ia_pin);
+    uint slice_ib = pwm_gpio_to_slice_num(ib_pin);
+    pwm_set_chan_level(slice_ia, pwm_gpio_to_channel(ia_pin), MAX_DUTY);
+    pwm_set_chan_level(slice_ib, pwm_gpio_to_channel(ib_pin), MAX_DUTY);
+}
+
 // ======================================
 // Module Motor Control Functions
 // ======================================
@@ -102,11 +133,11 @@ void moduleA_stop() {
 
 // ---------- MODULE B (Right) ----------
 void moduleB_motor1(int duty) { motor_set(IN1_B1, IN2_B1, EN_B1, duty); }
-void moduleB_motor2(int duty) { motor_set(IN1_B2, IN2_B2, EN_B2, duty); }
+void moduleB_motor2(int duty) { l9110h_motor_set(IA_B2, IB_B2, duty); }  // L9110H driver
 
 void moduleB_stop() {
     stop_motor(IN1_B1, IN2_B1, EN_B1);
-    stop_motor(IN1_B2, IN2_B2, EN_B2);
+    l9110h_motor_stop(IA_B2, IB_B2);  // L9110H driver
 }
 
 // ======================================
@@ -373,25 +404,27 @@ static PT_THREAD (protothread_toggle_cyw43(struct pt *pt))
 // Motor GPIO/PWM initialization
 // ====================================================
 void motor_init() {
-    // All motor control pins
-    int all_pins[] = {
+    // Standard motor driver pins (EN/IN1/IN2)
+    int standard_pins[] = {
         EN_A1, IN1_A1, IN2_A1,
         EN_A2, IN1_A2, IN2_A2,
-        EN_B1, IN1_B1, IN2_B1,
-        EN_B2, IN1_B2, IN2_B2
+        EN_B1, IN1_B1, IN2_B1
     };
 
-    // Configure all pins as outputs
-    for (int i = 0; i < 12; i++) {
-        gpio_init(all_pins[i]);
-        gpio_set_dir(all_pins[i], GPIO_OUT);
+    // Configure standard motor pins as outputs
+    for (int i = 0; i < 9; i++) {
+        gpio_init(standard_pins[i]);
+        gpio_set_dir(standard_pins[i], GPIO_OUT);
     }
 
-    // Setup PWM for EN pins
+    // Setup PWM for standard EN pins
     pwm_setup(EN_A1);
     pwm_setup(EN_A2);
     pwm_setup(EN_B1);
-    pwm_setup(EN_B2);
+    
+    // L9110H motor driver for B2 - both IA and IB need PWM
+    pwm_setup(IA_B2);
+    pwm_setup(IB_B2);
     
     // Start with motors stopped
     robot_stop();
@@ -410,6 +443,11 @@ int main() {
 
   // =======================
   // init the wifi network
+  
+    // Add delay after power-up to let voltage stabilize (important for battery power)
+    printf("Waiting for power to stabilize...\n");
+    sleep_ms(1000);
+
     if (cyw43_arch_init()) {
         printf("failed to initialise cyw43\n");
         return 1;
@@ -417,13 +455,28 @@ int main() {
 
     cyw43_arch_enable_sta_mode();
 
-    printf("Connecting to Wi-Fi...\n");
-    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 50000)) {
-        printf("failed to connect: cyw43 arch wifi timeout.\n");
+    // Retry WiFi connection with delays between attempts (helps with battery power)
+    int max_retries = 5;
+    int retry_count = 0;
+    bool connected = false;
+
+    while (!connected && retry_count < max_retries) {
+        printf("WiFi connection attempt %d/%d...\n", retry_count + 1, max_retries);
+        
+        if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, 
+                CYW43_AUTH_WPA2_AES_PSK, 30000) == 0) {
+            connected = true;
+            printf("Connected: picoW IP addr: %s\n", ip4addr_ntoa(netif_ip4_addr(netif_list)));
+        } else {
+            printf("Connection attempt %d failed, retrying...\n", retry_count + 1);
+            retry_count++;
+            sleep_ms(2000);  // Wait before retry to let power stabilize
+        }
+    }
+
+    if (!connected) {
+        printf("Failed to connect to WiFi after %d attempts\n", max_retries);
         return 1;
-    } else {
-      // optional print addr
-        printf("Connected: picoW IP addr: %s\n", ip4addr_ntoa(netif_ip4_addr(netif_list)));
     }
 
     //============================
