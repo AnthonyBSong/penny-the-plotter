@@ -200,8 +200,8 @@ void robot_stop() {
 // =======================================
 // necessary to connect to wireless
 // !!! Do NOT post this info !!!
-#define WIFI_SSID "Anthony"
-#define WIFI_PASSWORD "OnUv2NjT"
+#define WIFI_SSID "XXX"
+#define WIFI_PASSWORD "XXX"
 
 // =======================================
 // protothreads and thread communication
