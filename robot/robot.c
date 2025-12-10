@@ -32,7 +32,7 @@
 // udp constants
 #define UDP_PORT 5555
 #define UDP_MSG_LEN_MAX 64
-#define UDP_TARGET "10.59.35.63" // my laptop addresss
+#define UDP_TARGET "172.20.10.2" // laptop address
 #define UDP_INTERVAL_MS 10
 
 // ======================================
@@ -63,9 +63,6 @@
 // ======================================
 // ENCODER DEFINES (QUADRATURE: A/B SIGNALS)
 // ======================================
-// Each encoder has two signal wires: phase A and phase B
-// green wire as A
-// yellow wire as B
 
 #define ENC_A1_A    6
 #define ENC_A1_B    7
@@ -86,6 +83,26 @@ volatile int32_t enc_count_a1 = 0;
 volatile int32_t enc_count_a2 = 0;
 volatile int32_t enc_count_b1 = 0;
 volatile int32_t enc_count_b2 = 0;
+
+// ======================================
+// Closed-loop control state
+// ======================================
+
+// Motor speed setpoints derived from linear_cmd/angular_cmd
+volatile int mA1_sp = 0;
+volatile int mA2_sp = 0;
+volatile int mB1_sp = 0;
+volatile int mB2_sp = 0;
+
+// Actual PWM duties applied to motors (control loop updates these)
+static int duty_A1 = 0;
+static int duty_A2 = 0;
+static int duty_B1 = 0;
+static int duty_B2 = 0;
+
+// Simple proportional gains
+#define MOTOR_KP_NUM 1
+#define MOTOR_KP_DEN 4   // Kp ≈ 0.25
 
 // ======================================
 // Motor Control Helper Functions
@@ -138,7 +155,6 @@ void l9110h_motor_set(int ia_pin, int ib_pin, int duty) {
 }
 
 void l9110h_motor_stop(int ia_pin, int ib_pin) {
-    // Brake mode: set both pins to full duty (HIGH) to actively stop the motor
     uint slice_ia = pwm_gpio_to_slice_num(ia_pin);
     uint slice_ib = pwm_gpio_to_slice_num(ib_pin);
     pwm_set_chan_level(slice_ia, pwm_gpio_to_channel(ia_pin), MAX_DUTY);
@@ -148,8 +164,6 @@ void l9110h_motor_stop(int ia_pin, int ib_pin) {
 // ======================================
 // Encoder Quadrature Decoding (ISR)
 // ======================================
-// Called on any edge of channel A pins
-// Reads channel B to determine direction
 
 void encoder_isr(uint gpio, uint32_t events) {
     bool a_state, b_state;
@@ -157,38 +171,26 @@ void encoder_isr(uint gpio, uint32_t events) {
     if (gpio == ENC_A1_A) {
         a_state = gpio_get(ENC_A1_A);
         b_state = gpio_get(ENC_A1_B);
-        if (a_state == b_state) {
-            enc_count_a1++;
-        } else {
-            enc_count_a1--;
-        }
+        if (a_state == b_state) enc_count_a1++;
+        else                    enc_count_a1--;
     }
     else if (gpio == ENC_A2_A) {
         a_state = gpio_get(ENC_A2_A);
         b_state = gpio_get(ENC_A2_B);
-        if (a_state == b_state) {
-            enc_count_a2++;
-        } else {
-            enc_count_a2--;
-        }
+        if (a_state == b_state) enc_count_a2++;
+        else                    enc_count_a2--;
     }
     else if (gpio == ENC_B1_A) {
         a_state = gpio_get(ENC_B1_A);
         b_state = gpio_get(ENC_B1_B);
-        if (a_state == b_state) {
-            enc_count_b1++;
-        } else {
-            enc_count_b1--;
-        }
+        if (a_state == b_state) enc_count_b1++;
+        else                    enc_count_b1--;
     }
     else if (gpio == ENC_B2_A) {
         a_state = gpio_get(ENC_B2_A);
         b_state = gpio_get(ENC_B2_B);
-        if (a_state == b_state) {
-            enc_count_b2++;
-        } else {
-            enc_count_b2--;
-        }
+        if (a_state == b_state) enc_count_b2++;
+        else                    enc_count_b2--;
     }
 }
 
@@ -196,7 +198,6 @@ void encoder_isr(uint gpio, uint32_t events) {
 // Encoder Initialization
 // ======================================
 void encoder_init() {
-    // Initialize encoder A pins as inputs with pull-ups
     int enc_a_pins[] = {ENC_A1_A, ENC_A2_A, ENC_B1_A, ENC_B2_A};
     int enc_b_pins[] = {ENC_A1_B, ENC_A2_B, ENC_B1_B, ENC_B2_B};
     
@@ -212,35 +213,21 @@ void encoder_init() {
         gpio_pull_up(enc_b_pins[i]);
     }
     
-    // Set up interrupt callback (shared for all GPIOs)
-    gpio_set_irq_enabled_with_callback(ENC_A1_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &encoder_isr);
+    // Shared callback for all A channels
+    gpio_set_irq_enabled_with_callback(
+        ENC_A1_A,
+        GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL,
+        true,
+        &encoder_isr
+    );
     
-    // Enable interrupts for other encoder A channels (callback already registered)
     gpio_set_irq_enabled(ENC_A2_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
     gpio_set_irq_enabled(ENC_B1_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
     gpio_set_irq_enabled(ENC_B2_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 }
 
-// Helper functions to read/reset encoder counts
-int32_t get_encoder_a1() { return enc_count_a1; }
-int32_t get_encoder_a2() { return enc_count_a2; }
-int32_t get_encoder_b1() { return enc_count_b1; }
-int32_t get_encoder_b2() { return enc_count_b2; }
-
-void reset_encoder_a1() { enc_count_a1 = 0; }
-void reset_encoder_a2() { enc_count_a2 = 0; }
-void reset_encoder_b1() { enc_count_b1 = 0; }
-void reset_encoder_b2() { enc_count_b2 = 0; }
-
-void reset_all_encoders() {
-    enc_count_a1 = 0;
-    enc_count_a2 = 0;
-    enc_count_b1 = 0;
-    enc_count_b2 = 0;
-}
-
 // ======================================
-// Module Motor Control Functions
+// Module Motor Control Functions (low-level)
 // ======================================
 
 // ---------- MODULE A (Left) ----------
@@ -254,94 +241,75 @@ void moduleA_stop() {
 
 // ---------- MODULE B (Right) ----------
 void moduleB_motor1(int duty) { motor_set(IN1_B1, IN2_B1, EN_B1, duty); }
-void moduleB_motor2(int duty) { l9110h_motor_set(IA_B2, IB_B2, duty); }  // L9110H driver
+void moduleB_motor2(int duty) { l9110h_motor_set(IA_B2, IB_B2, duty); }
 
 void moduleB_stop() {
     stop_motor(IN1_B1, IN2_B1, EN_B1);
-    l9110h_motor_stop(IA_B2, IB_B2);  // L9110H driver
+    l9110h_motor_stop(IA_B2, IB_B2);
 }
 
 // ======================================
-// High-Level Swerve Commands
+// High-Level Swerve Mapping (setpoints)
 // ======================================
 // Differential swerve math:
 //   wheel_speed  = (m1 - m2)
 //   steering_yaw = (m1 + m2)
 
-void moduleA_set(int wheel_cmd, int yaw_cmd) {
-    int m1 = yaw_cmd + wheel_cmd;
-    int m2 = yaw_cmd - wheel_cmd;
-    moduleA_motor1(m1);
-    moduleA_motor2(m2);
+volatile int linear_cmd  = 0;
+volatile int angular_cmd = 0;
+
+void update_motor_setpoints_from_cmd(void) {
+    int wheel = linear_cmd;
+    int yaw   = angular_cmd;
+
+    // these are logical "desired speeds" (sign = direction)
+    mA1_sp = yaw + wheel;
+    mA2_sp = yaw - wheel;
+    mB1_sp = yaw + wheel;
+    mB2_sp = yaw - wheel;
 }
 
-void moduleB_set(int wheel_cmd, int yaw_cmd) {
-    int m1 = yaw_cmd + wheel_cmd;
-    int m2 = yaw_cmd - wheel_cmd;
-    moduleB_motor1(m1);
-    moduleB_motor2(m2);
-}
-
-// ======================================
-// Whole Robot Movement Commands
-// ======================================
-
+// Convenience helpers (still go through robot_drive)
 void robot_drive(int linear, int angular) {
-    // linear: positive=forward, negative=backward
-    // angular: positive=left, negative=right
-    moduleA_set(linear, angular);
-    moduleB_set(linear, angular);
+    // clamp commands to MAX_DUTY
+    if (linear >  MAX_DUTY) linear =  MAX_DUTY;
+    if (linear < -MAX_DUTY) linear = -MAX_DUTY;
+    if (angular >  MAX_DUTY) angular =  MAX_DUTY;
+    if (angular < -MAX_DUTY) angular = -MAX_DUTY;
+
+    linear_cmd  = linear;
+    angular_cmd = angular;
+    update_motor_setpoints_from_cmd();
 }
 
-void robot_forward(int speed) {
-    moduleA_set(+speed, 0);
-    moduleB_set(+speed, 0);
-}
-
-void robot_backward(int speed) {
-    moduleA_set(-speed, 0);
-    moduleB_set(-speed, 0);
-}
-
-void robot_rotate_left(int yaw) {
-    moduleA_set(0, +yaw);
-    moduleB_set(0, +yaw);
-}
-
-void robot_rotate_right(int yaw) {
-    moduleA_set(0, -yaw);
-    moduleB_set(0, -yaw);
-}
+void robot_forward(int speed)  { robot_drive(+speed, 0); }
+void robot_backward(int speed) { robot_drive(-speed, 0); }
+void robot_rotate_left(int yaw){ robot_drive(0, +yaw); }
+void robot_rotate_right(int yaw){ robot_drive(0, -yaw); }
 
 void robot_stop() {
+    robot_drive(0, 0);
+    duty_A1 = duty_A2 = duty_B1 = duty_B2 = 0;
     moduleA_stop();
     moduleB_stop();
 }
 
 // =======================================
-// necessary to connect to wireless
-// !!! Do NOT post this info !!!
-#define WIFI_SSID "XXX"
-#define WIFI_PASSWORD "XXX"
+// WiFi
+// =======================================
+#define WIFI_SSID "iPhone (802)"
+#define WIFI_PASSWORD "zephan123"
 
 // =======================================
 // protothreads and thread communication
+// =======================================
 char recv_data[UDP_MSG_LEN_MAX];
 
-// Motor command values (from UDP)
-// Format: "<linear_speed> <angular_speed>"
-// linear_speed:  -500 to 500 (negative=backward, positive=forward)
-// angular_speed: -500 to 500 (negative=right, positive=left)
-volatile int linear_cmd = 0;
-volatile int angular_cmd = 0;
-
-// Debug/stats tracking
 volatile uint32_t packets_received = 0;
 volatile uint32_t packets_sent = 0;
 volatile uint32_t parse_errors = 0;
 volatile uint32_t last_recv_time_ms = 0;
 
-// interthread communication
 struct pt_sem new_udp_recv_s, new_udp_send_s ;
 
 #if LWIP_UDP
@@ -356,33 +324,24 @@ udpecho_raw_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p,
   LWIP_UNUSED_ARG(arg);
 
   if (p != NULL) {
-    //printf("p payload in call back: = %s\n", p->payload);
     memcpy(recv_data, p->payload, UDP_MSG_LEN_MAX);
-    // can signal from an ISR -- BUT NEVER wait in an ISR
     PT_SEM_SIGNAL(pt, &new_udp_recv_s) ;
-    
-    /* free the pbuf */
     pbuf_free(p);
   }
   else printf("NULL pt in callback");
 }
 
-// ===================================
-// Define the recv callback 
-void 
-udpecho_raw_init(void)
+void udpecho_raw_init(void)
 {
   udpecho_raw_pcb = udp_new_ip_type(IPADDR_TYPE_ANY);
   p = pbuf_alloc(PBUF_TRANSPORT, UDP_MSG_LEN_MAX+1, PBUF_RAM);
 
   if (udpecho_raw_pcb != NULL) {
     err_t err;
-    // netif_ip4_addr returns the picow ip address
     err = udp_bind(udpecho_raw_pcb, netif_ip4_addr(netif_list), UDP_PORT); //DHCP addr
 
     if (err == ERR_OK) {
       udp_recv(udpecho_raw_pcb, udpecho_raw_recv, NULL);
-      //printf("Set up recv callback\n");
     } else {
       printf("bind error");
     }
@@ -392,14 +351,13 @@ udpecho_raw_init(void)
 }
 
 #endif /* LWIP_UDP */
-// end recv setup
 
 // =======================================
-// UDP send thead
-// for now just bounces back the recv packet
-
+// UDP send thread
+// =======================================
 static PT_THREAD (protothread_udp_send(struct pt *pt))
- { PT_BEGIN(pt);
+{
+    PT_BEGIN(pt);
     static struct udp_pcb* pcb;
     pcb = udp_new();
     pcb->remote_port = UDP_PORT ;
@@ -409,23 +367,20 @@ static PT_THREAD (protothread_udp_send(struct pt *pt))
     ipaddr_aton(UDP_TARGET, &addr);
     
     while (true) {
-        
         PT_SEM_WAIT(pt, &new_udp_send_s) ;
 
         struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, UDP_MSG_LEN_MAX+1, PBUF_RAM);
         char *req = (char *)p->payload;
         memset(req, 0, UDP_MSG_LEN_MAX+1);
         
-        // Send debug info: seq#, motor cmds, uptime, stats
         uint32_t uptime_ms = to_ms_since_boot(get_absolute_time());
-        sprintf(req, "%lu|%d,%d|rx:%lu,err:%lu", 
-                packets_sent,           // packet sequence number
-                linear_cmd, angular_cmd, // current motor commands
-                packets_received,        // total packets received
-                parse_errors);           // parse error count
+        sprintf(req, "%lu|%d,%d|rx:%lu,err:%lu",
+                packets_sent,
+                linear_cmd, angular_cmd,
+                packets_received,
+                parse_errors);
         
         err_t er = udp_sendto(pcb, p, &addr, UDP_PORT);
-       
         pbuf_free(p);
         if (er != ERR_OK) {
             printf("UDP send error=%d\n", er);
@@ -437,7 +392,7 @@ static PT_THREAD (protothread_udp_send(struct pt *pt))
         cyw43_arch_poll();
         sleep_ms(BEACON_INTERVAL_MS);
 #else
-        PT_YIELD_usec(UDP_INTERVAL_MS*1000);
+        PT_YIELD_usec(UDP_INTERVAL_MS * 1000);
 #endif
     }
 
@@ -451,126 +406,217 @@ static PT_THREAD (protothread_udp_send(struct pt *pt))
 static PT_THREAD (protothread_udp_recv(struct pt *pt))
 {
     PT_BEGIN(pt);
-    
-    // data structure for interval timer
-    PT_INTERVAL_INIT() ;
+    PT_INTERVAL_INIT();
 
     while(1) {
-        // wait for new packet
         PT_SEM_WAIT(pt, &new_udp_recv_s) ;
         
         packets_received++;
         last_recv_time_ms = to_ms_since_boot(get_absolute_time());
 
-        // Parse motor command: "linear angular"
         int new_linear = 0, new_angular = 0;
         int parsed = sscanf(recv_data, "%d %d", &new_linear, &new_angular);
         
         if (parsed == 2) {
-            // Clamp values to valid range
-            if (new_linear > MAX_DUTY) new_linear = MAX_DUTY;
-            if (new_linear < -MAX_DUTY) new_linear = -MAX_DUTY;
-            if (new_angular > MAX_DUTY) new_angular = MAX_DUTY;
-            if (new_angular < -MAX_DUTY) new_angular = -MAX_DUTY;
-            
-            linear_cmd = new_linear;
-            angular_cmd = new_angular;
-            
-            // Apply motor commands
-            robot_drive(linear_cmd, angular_cmd);
-            
+            robot_drive(new_linear, new_angular);
             printf("[RX] lin=%d ang=%d\n", linear_cmd, angular_cmd);
         } else {
             parse_errors++;
             printf("[ERR] Bad packet: '%s' (parsed %d)\n", recv_data, parsed);
         }
         
-        // tell send thread to acknowledge
         PT_SEM_SIGNAL(pt, &new_udp_send_s) ;
-
-        PT_YIELD_INTERVAL(10) ;
-        //
-        // NEVER exit while
-    } // END WHILE(1)
+        PT_YIELD_INTERVAL(10);
+    }
     PT_END(pt);
-} // motor command thread
+}
 
 // ==================================================
-// toggle cyw43 LED  
-// Heartbeat indicator - blinks to show system is alive
+// toggle cyw43 LED  (heartbeat)
 // ==================================================
 static PT_THREAD (protothread_toggle_cyw43(struct pt *pt))
 {
     PT_BEGIN(pt);
     static bool LED_state = false ;
-    //
-    // data structure for interval timer
-    PT_INTERVAL_INIT() ;
+    PT_INTERVAL_INIT();
 
     while(1) {
-        //
         LED_state = !LED_state ;
-        // the onboard LED is attached to the wifi module
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, LED_state);
-        // Fixed 500ms blink as heartbeat
-        PT_YIELD_INTERVAL(500000) ;
-        //
-        // NEVER exit while
-    } // END WHILE(1)
+        PT_YIELD_INTERVAL(500000); // 500 ms
+    }
     PT_END(pt);
-} // heartbeat thread
+}
 
+// ==================================================
+// Closed-loop motor control thread
+// ==================================================
+
+// helper to get sign
+static inline int sgn(int x) {
+    if (x > 0) return 1;
+    if (x < 0) return -1;
+    return 0;
+}
+
+// P-control relative to a target magnitude
+static void equalize_to_ref(
+    int *duty, int ref_mag, int actual_delta, int desired_sign)
+{
+    if (desired_sign == 0) {
+        *duty = 0;
+        return;
+    }
+
+    int actual_mag = abs(actual_delta);
+    int error      = ref_mag - actual_mag;
+    int delta      = (error * MOTOR_KP_NUM) / MOTOR_KP_DEN;
+
+    int new_mag = abs(*duty) + delta;
+    if (new_mag < 0)          new_mag = 0;
+    if (new_mag > MAX_DUTY)   new_mag = MAX_DUTY;
+
+    *duty = desired_sign * new_mag;
+}
+
+// per-motor P-control to track its own setpoint magnitude
+static void track_own_setpoint(
+    int *duty, int setpoint, int actual_delta)
+{
+    int sig = sgn(setpoint);
+    if (sig == 0) {
+        *duty = 0;
+        return;
+    }
+
+    int target_mag = abs(setpoint);
+    int actual_mag = abs(actual_delta);
+    int error      = target_mag - actual_mag;
+    int delta      = (error * MOTOR_KP_NUM) / MOTOR_KP_DEN;
+
+    int new_mag = abs(*duty) + delta;
+    if (new_mag < 0)        new_mag = 0;
+    if (new_mag > MAX_DUTY) new_mag = MAX_DUTY;
+
+    *duty = sig * new_mag;
+}
+
+static PT_THREAD (protothread_motor_control(struct pt *pt))
+{
+    PT_BEGIN(pt);
+    PT_INTERVAL_INIT();
+
+    static int32_t last_a1 = 0;
+    static int32_t last_a2 = 0;
+    static int32_t last_b1 = 0;
+    static int32_t last_b2 = 0;
+
+    while (1) {
+        // Snapshot encoder counts and compute deltas (speed estimates)
+        int32_t cA1 = enc_count_a1;
+        int32_t cA2 = enc_count_a2;
+        int32_t cB1 = enc_count_b1;
+        int32_t cB2 = enc_count_b2;
+
+        int32_t dA1 = cA1 - last_a1;
+        int32_t dA2 = cA2 - last_a2;
+        int32_t dB1 = cB1 - last_b1;
+        int32_t dB2 = cB2 - last_b2;
+
+        last_a1 = cA1;
+        last_a2 = cA2;
+        last_b1 = cB1;
+        last_b2 = cB2;
+
+        int sigA1 = sgn(mA1_sp);
+        int sigA2 = sgn(mA2_sp);
+        int sigB1 = sgn(mB1_sp);
+        int sigB2 = sgn(mB2_sp);
+
+        // Case 1: robot stopped
+        if (linear_cmd == 0 && angular_cmd == 0) {
+            duty_A1 = duty_A2 = duty_B1 = duty_B2 = 0;
+        }
+        // Case 2: pure forward/backward -> equalize three motors to one reference
+        else if (angular_cmd == 0 && linear_cmd != 0) {
+            int ref_mag = abs(dA1); // A1 = reference
+            // if just starting and ref speed is tiny, just push open-loop a bit
+            if (ref_mag < 1) ref_mag = abs(mA1_sp);
+
+            // A1 tracks its own setpoint magnitude
+            track_own_setpoint(&duty_A1, mA1_sp, dA1);
+
+            // A2, B1, B2 equalize to ref magnitude (A1) using their desired direction
+            equalize_to_ref(&duty_A2, ref_mag, dA2, sigA2);
+            equalize_to_ref(&duty_B1, ref_mag, dB1, sigB1);
+            equalize_to_ref(&duty_B2, ref_mag, dB2, sigB2);
+        }
+        // Case 3: pure rotation -> all four should match
+        else if (linear_cmd == 0 && angular_cmd != 0) {
+            int ref_mag = abs(dA1);
+            if (ref_mag < 1) ref_mag = abs(mA1_sp);
+
+            track_own_setpoint(&duty_A1, mA1_sp, dA1);
+            equalize_to_ref(&duty_A2, ref_mag, dA2, sigA2);
+            equalize_to_ref(&duty_B1, ref_mag, dB1, sigB1);
+            equalize_to_ref(&duty_B2, ref_mag, dB2, sigB2);
+        }
+        // Case 4: mixed arc motion -> each motor tracks its own setpoint
+        else {
+            track_own_setpoint(&duty_A1, mA1_sp, dA1);
+            track_own_setpoint(&duty_A2, mA2_sp, dA2);
+            track_own_setpoint(&duty_B1, mB1_sp, dB1);
+            track_own_setpoint(&duty_B2, mB2_sp, dB2);
+        }
+
+        // Apply updated duties to hardware
+        moduleA_motor1(duty_A1);
+        moduleA_motor2(duty_A2);
+        moduleB_motor1(duty_B1);
+        moduleB_motor2(duty_B2);
+
+        // Very important: yield so other threads keep running (non-blocking)
+        PT_YIELD_INTERVAL(50000); // 50 ms control loop
+    }
+
+    PT_END(pt);
+}
 
 // ====================================================
 // Motor GPIO/PWM initialization
 // ====================================================
 void motor_init() {
-    // Standard motor driver pins (EN/IN1/IN2)
     int standard_pins[] = {
         EN_A1, IN1_A1, IN2_A1,
         EN_A2, IN1_A2, IN2_A2,
         EN_B1, IN1_B1, IN2_B1
     };
 
-    // Configure standard motor pins as outputs
     for (int i = 0; i < 9; i++) {
         gpio_init(standard_pins[i]);
         gpio_set_dir(standard_pins[i], GPIO_OUT);
     }
 
-    // Setup PWM for standard EN pins
     pwm_setup(EN_A1);
     pwm_setup(EN_A2);
     pwm_setup(EN_B1);
     
-    // L9110H motor driver for B2 - both IA and IB need PWM
     pwm_setup(IA_B2);
     pwm_setup(IB_B2);
     
-    // Start with motors stopped
     robot_stop();
 }
 
 // ====================================================
 int main() {
-  // =======================
-  // init the serial
     stdio_init_all();
 
-  // =======================
-  // init the motors
     motor_init();
     printf("Motors initialized\n");
 
-  // =======================
-  // init the encoders
     encoder_init();
     printf("Encoders initialized\n");
 
-  // =======================
-  // init the wifi network
-  
-    // Add delay after power-up to let voltage stabilize (important for battery power)
     printf("Waiting for power to stabilize...\n");
     sleep_ms(1000);
 
@@ -581,7 +627,6 @@ int main() {
 
     cyw43_arch_enable_sta_mode();
 
-    // Retry WiFi connection with delays between attempts (helps with battery power)
     int max_retries = 5;
     int retry_count = 0;
     bool connected = false;
@@ -589,14 +634,17 @@ int main() {
     while (!connected && retry_count < max_retries) {
         printf("WiFi connection attempt %d/%d...\n", retry_count + 1, max_retries);
         
-        if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, 
+        if (cyw43_arch_wifi_connect_timeout_ms(
+                WIFI_SSID, WIFI_PASSWORD, 
                 CYW43_AUTH_WPA2_AES_PSK, 30000) == 0) {
             connected = true;
-            printf("Connected: picoW IP addr: %s\n", ip4addr_ntoa(netif_ip4_addr(netif_list)));
+            printf("Connected: picoW IP addr: %s\n",
+                   ip4addr_ntoa(netif_ip4_addr(netif_list)));
         } else {
-            printf("Connection attempt %d failed, retrying...\n", retry_count + 1);
+            printf("Connection attempt %d failed, retrying...\n",
+                   retry_count + 1);
             retry_count++;
-            sleep_ms(2000);  // Wait before retry to let power stabilize
+            sleep_ms(2000);
         }
     }
 
@@ -605,30 +653,17 @@ int main() {
         return 1;
     }
 
-    //============================
-    // UDP receive ISR routines
     udpecho_raw_init();
 
-      //========================================
-  // start core 1 threads -- none here
-  //multicore_reset_core1();
-  //multicore_launch_core1(&core1_main);
+    PT_SEM_INIT(&new_udp_send_s, 0);
+    PT_SEM_INIT(&new_udp_recv_s, 0);
 
-  // === config threads ========================
-  // for core 0
+    pt_add_thread(protothread_udp_send);
+    pt_add_thread(protothread_udp_recv);
+    pt_add_thread(protothread_toggle_cyw43);
+    pt_add_thread(protothread_motor_control);
 
-  // init the thread control semaphores
-  PT_SEM_INIT(&new_udp_send_s, 0) ;
-  PT_SEM_INIT(&new_udp_recv_s, 0) ;
-
-  //printf("Starting threads\n") ;
-  pt_add_thread(protothread_udp_send);
-  pt_add_thread(protothread_udp_recv);
-  pt_add_thread(protothread_toggle_cyw43) ;
-  //pt_add_thread(protothread_serial) ;
-  //
-  // === initalize the scheduler ===============
-  pt_schedule_start ;
+    pt_schedule_start;
 
     cyw43_arch_deinit();
     return 0;
