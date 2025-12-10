@@ -61,6 +61,33 @@
 #define MAX_DUTY 500
 
 // ======================================
+// ENCODER DEFINES (QUADRATURE: A/B SIGNALS)
+// ======================================
+// Each encoder has two signal wires: phase A and phase B
+// green wire as A
+// yellow wire as B
+
+#define ENC_A1_A    6
+#define ENC_A1_B    7
+
+#define ENC_A2_A    16
+#define ENC_A2_B    17
+
+#define ENC_B1_A    2
+#define ENC_B1_B    3
+
+#define ENC_B2_A    20
+#define ENC_B2_B    21
+
+// ======================================
+// Encoder global state
+// ======================================
+volatile int32_t enc_count_a1 = 0;
+volatile int32_t enc_count_a2 = 0;
+volatile int32_t enc_count_b1 = 0;
+volatile int32_t enc_count_b2 = 0;
+
+// ======================================
 // Motor Control Helper Functions
 // ======================================
 
@@ -116,6 +143,100 @@ void l9110h_motor_stop(int ia_pin, int ib_pin) {
     uint slice_ib = pwm_gpio_to_slice_num(ib_pin);
     pwm_set_chan_level(slice_ia, pwm_gpio_to_channel(ia_pin), MAX_DUTY);
     pwm_set_chan_level(slice_ib, pwm_gpio_to_channel(ib_pin), MAX_DUTY);
+}
+
+// ======================================
+// Encoder Quadrature Decoding (ISR)
+// ======================================
+// Called on any edge of channel A pins
+// Reads channel B to determine direction
+
+void encoder_isr(uint gpio, uint32_t events) {
+    bool a_state, b_state;
+    
+    if (gpio == ENC_A1_A) {
+        a_state = gpio_get(ENC_A1_A);
+        b_state = gpio_get(ENC_A1_B);
+        if (a_state == b_state) {
+            enc_count_a1++;
+        } else {
+            enc_count_a1--;
+        }
+    }
+    else if (gpio == ENC_A2_A) {
+        a_state = gpio_get(ENC_A2_A);
+        b_state = gpio_get(ENC_A2_B);
+        if (a_state == b_state) {
+            enc_count_a2++;
+        } else {
+            enc_count_a2--;
+        }
+    }
+    else if (gpio == ENC_B1_A) {
+        a_state = gpio_get(ENC_B1_A);
+        b_state = gpio_get(ENC_B1_B);
+        if (a_state == b_state) {
+            enc_count_b1++;
+        } else {
+            enc_count_b1--;
+        }
+    }
+    else if (gpio == ENC_B2_A) {
+        a_state = gpio_get(ENC_B2_A);
+        b_state = gpio_get(ENC_B2_B);
+        if (a_state == b_state) {
+            enc_count_b2++;
+        } else {
+            enc_count_b2--;
+        }
+    }
+}
+
+// ======================================
+// Encoder Initialization
+// ======================================
+void encoder_init() {
+    // Initialize encoder A pins as inputs with pull-ups
+    int enc_a_pins[] = {ENC_A1_A, ENC_A2_A, ENC_B1_A, ENC_B2_A};
+    int enc_b_pins[] = {ENC_A1_B, ENC_A2_B, ENC_B1_B, ENC_B2_B};
+    
+    for (int i = 0; i < 4; i++) {
+        // Channel A - triggers interrupt
+        gpio_init(enc_a_pins[i]);
+        gpio_set_dir(enc_a_pins[i], GPIO_IN);
+        gpio_pull_up(enc_a_pins[i]);
+        
+        // Channel B - read for direction
+        gpio_init(enc_b_pins[i]);
+        gpio_set_dir(enc_b_pins[i], GPIO_IN);
+        gpio_pull_up(enc_b_pins[i]);
+    }
+    
+    // Set up interrupt callback (shared for all GPIOs)
+    gpio_set_irq_enabled_with_callback(ENC_A1_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &encoder_isr);
+    
+    // Enable interrupts for other encoder A channels (callback already registered)
+    gpio_set_irq_enabled(ENC_A2_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(ENC_B1_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(ENC_B2_A, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+}
+
+// Helper functions to read/reset encoder counts
+int32_t get_encoder_a1() { return enc_count_a1; }
+int32_t get_encoder_a2() { return enc_count_a2; }
+int32_t get_encoder_b1() { return enc_count_b1; }
+int32_t get_encoder_b2() { return enc_count_b2; }
+
+void reset_encoder_a1() { enc_count_a1 = 0; }
+void reset_encoder_a2() { enc_count_a2 = 0; }
+void reset_encoder_b1() { enc_count_b1 = 0; }
+void reset_encoder_b2() { enc_count_b2 = 0; }
+
+void reset_all_encoders() {
+    enc_count_a1 = 0;
+    enc_count_a2 = 0;
+    enc_count_b1 = 0;
+    enc_count_b2 = 0;
 }
 
 // ======================================
@@ -440,6 +561,11 @@ int main() {
   // init the motors
     motor_init();
     printf("Motors initialized\n");
+
+  // =======================
+  // init the encoders
+    encoder_init();
+    printf("Encoders initialized\n");
 
   // =======================
   // init the wifi network
