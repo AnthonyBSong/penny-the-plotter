@@ -41,10 +41,11 @@ if __name__ == "__main__":
     move_time = time.time()
     curr_time = time.time()
 
+    # 2 sec was a 180 degree turn
     # Test forward
-    while (curr_time - move_time < 2):
+    while (curr_time - move_time < 2.5):
         print("Forward...")
-        sender.robot.move_forward(500)
+        sender.robot.move_forward()
         curr_time = time.time()
         time.sleep(0.5)
 
