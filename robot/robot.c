@@ -32,7 +32,7 @@
 // udp constants
 #define UDP_PORT 5555
 #define UDP_MSG_LEN_MAX 64
-#define UDP_TARGET "10.59.35.63" // laptop address
+#define UDP_TARGET "172.20.10.2" // laptop address
 #define UDP_INTERVAL_MS 10
 
 // ======================================
@@ -62,7 +62,7 @@
 
 // ======================================
 // ENCODER DEFINES (QUADRATURE: A/B SIGNALS)
-// =============================S=========
+// ======================================
 
 #define ENC_A1_A    6
 #define ENC_A1_B    7
@@ -443,6 +443,8 @@ static PT_THREAD (protothread_toggle_cyw43(struct pt *pt))
     while(1) {
         LED_state = !LED_state ;
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, LED_state);
+        PT_YIELD_INTERVAL(500000); // 500 ms
+    }
         PT_YIELD_INTERVAL(500000); // 500 ms
     }
     PT_END(pt);
