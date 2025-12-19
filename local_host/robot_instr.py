@@ -2,12 +2,6 @@ MAX_SPEED = 500
 
 
 class robot_instr:
-    """
-    Robot instruction generator for motor control commands.
-    
-    This class generates command strings that can be sent via UDP
-    to control the robot's differential swerve drive.
-    """
     
     def __init__(self, sender):
         self._sender = sender
@@ -40,7 +34,7 @@ class robot_instr:
     
     def drive(self, linear, angular):
         """
-        Combined linear and angular movement.
+        Combined linear and angular movement
         
         Args:
             linear: Linear speed (-500 to 500, positive=forward)
