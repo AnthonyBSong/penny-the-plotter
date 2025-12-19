@@ -28,15 +28,15 @@
         }
         
         h1 {
-            color: #B31B1B;
-            border-bottom: 3px solid #B31B1B;
+            color: #1a5f1a;
+            border-bottom: 3px solid #1a5f1a;
             padding-bottom: 10px;
             margin-bottom: 30px;
             font-size: 2.5em;
         }
         
         h2 {
-            color: #B31B1B;
+            color: #1a5f1a;
             margin-top: 40px;
             margin-bottom: 20px;
             padding-top: 20px;
@@ -100,7 +100,7 @@
         .toc {
             background-color: #f9f9f9;
             padding: 20px;
-            border-left: 4px solid #B31B1B;
+            border-left: 4px solid #1a5f1a;
             margin-bottom: 30px;
         }
         
@@ -110,7 +110,7 @@
         }
         
         .toc a {
-            color: #B31B1B;
+            color: #1a5f1a;
             text-decoration: none;
         }
         
@@ -131,7 +131,7 @@
         }
         
         th {
-            background-color: #B31B1B;
+            background-color: #1a5f1a;
             color: white;
         }
         
@@ -158,6 +158,10 @@
     <div class="container">
         <h1>Penny the Plotter - Final Report</h1>
         
+        <div style="text-align: center; margin: 30px 0;">
+            <iframe width="560" height="315" src="https://www.youtube.com/embed/P3Vw2PxRjWE?enablejsapi=1" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="max-width: 100%; border-radius: 8px;"></iframe>
+        </div>
+        
         <div class="toc">
             <h3>Table of Contents</h3>
             <ul>
@@ -178,24 +182,28 @@
         <div class="section" id="introduction">
             <h2>1. Project Introduction</h2>
             
-            <h3>Sound Bite</h3>
-            <p><strong>Penny the Plotter is an autonomous swerve-drive robot that draws precise geometric patterns on paper using computer vision tracking and closed-loop motor control.</strong></p>
+            <h3>High Level Overview</h3>
+            <p><strong>Penny the Plotter is a remotely controlled swerve-drive robot that draws precise geometric patterns on paper using closed-loop motor control.</strong></p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+                <iframe width="560" height="315" src="https://www.youtube.com/embed/P3Vw2PxRjWE?si=FTFY-XAXVOjAgkYy" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen style="max-width: 100%; border-radius: 8px;"></iframe>
+                <p style="margin-top: 15px;">
+                    <a href="https://www.youtube.com/watch?v=P3Vw2PxRjWE" target="_blank" style="color: #1a5f1a; font-weight: bold;">Watch video on YouTube</a>
+                </p>
+            </div>
             
             <h3>Summary</h3>
             <p>
-                Penny the Plotter is a differential swerve-drive robot designed to draw geometric patterns on a white paper surface. 
-                The system combines computer vision for position tracking, WiFi communication for remote control, and closed-loop PID 
-                motor control with quadrature encoders for precise movement. The robot receives drawing commands via UDP from a Python 
-                control script, which simultaneously visualizes the path using turtle graphics. The project demonstrates integration of 
-                embedded systems (Raspberry Pi Pico W), motor control, computer vision, and network communication to create an 
-                autonomous drawing platform.
+                Penny the Plotter is a differential swerve-drive robot designed to draw geometric patterns on a white paper or whiteboard surface. 
+                The system combines WiFi communication for remote control with closed-loop PID motor control and quadrature encoders for precise movement.
+                The robot receives drawing commands via UDP from a Python control script running on a laptop, which simultaneously visualizes the path 
+                using python turtle graphics. The project demonstrates integration of embedded systems (Raspberry Pi Pico W), motor control,
+                and network communication to create a remotely controlled drawing robot.
             </p>
             <p>
                 The motivation for this project was to create a platform that combines multiple engineering disciplines: embedded 
-                systems programming, control theory, computer vision, and robotics. The swerve-drive mechanism provides omnidirectional 
-                movement capabilities, allowing the robot to draw complex paths including curves and sharp turns. The computer vision 
-                system enables real-time tracking of both the robot's position and the drawing surface, providing feedback for 
-                potential closed-loop path following in future iterations.
+                systems programming, mechanical engineering, and robotics. The swerve-drive mechanism provides omnidirectional 
+                movement capabilities, allowing the robot to draw complex paths including curves and sharp turns.
             </p>
         </div>
 
@@ -215,7 +223,6 @@
             <ul>
                 <li>Commercial drawing robots (AxiDraw, Makeblock mDrawBot)</li>
                 <li>Swerve drive mechanisms from FIRST Robotics Competition</li>
-                <li>Computer vision tracking systems for mobile robots</li>
             </ul>
             
             <h3>Background Math</h3>
@@ -244,16 +251,9 @@ Module B: m1 = +yaw, m2 = +yaw</pre>
 duty_change = error × Kp
 new_duty = current_duty + duty_change</pre>
             
-            <h4>Homography Transformation</h4>
-            <p>
-                Computer vision uses homography to transform image coordinates to board coordinates:
-            </p>
-            <pre>H = 3×3 transformation matrix
-[x_board, y_board, 1] = H × [u_image, v_image, 1]</pre>
-            
             <h3>Logical Structure</h3>
             <p>
-                The system consists of three main components:
+                The system consists of two main components:
             </p>
             <ol>
                 <li><strong>Robot (Pico W)</strong>: Runs embedded C code with protothreads for:
@@ -262,14 +262,6 @@ new_duty = current_duty + duty_change</pre>
                         <li>Motor control (closed-loop PID)</li>
                         <li>Encoder quadrature decoding (ISR-based)</li>
                         <li>LED heartbeat indicator</li>
-                    </ul>
-                </li>
-                <li><strong>Computer Vision (Python)</strong>: OpenCV-based tracking:
-                    <ul>
-                        <li>White paper detection (thresholding)</li>
-                        <li>Robot detection (HSV color filtering)</li>
-                        <li>Corner extraction for both paper and robot</li>
-                        <li>Homography transformation to board coordinates</li>
                     </ul>
                 </li>
                 <li><strong>Control Script (Python)</strong>: High-level path planning:
@@ -308,9 +300,9 @@ new_duty = current_duty + duty_change</pre>
                     <td>Built-in - integrated, lower cost</td>
                 </tr>
                 <tr>
-                    <td>Vision Processing</td>
-                    <td>Dedicated vision processor</td>
-                    <td>Python/OpenCV on laptop</td>
+                    <td>Path Planning</td>
+                    <td>Dedicated processor</td>
+                    <td>Python scripts on laptop</td>
                     <td>Laptop processing - more powerful, easier development</td>
                 </tr>
             </table>
@@ -324,7 +316,6 @@ new_duty = current_duty + duty_change</pre>
                     implementations may be patented, the general concept is well-established in the public domain.</li>
                 <li><strong>Raspberry Pi</strong>: Raspberry Pi and Pico are trademarks of Raspberry Pi Ltd. Used under standard 
                     terms for educational/hobbyist use.</li>
-                <li><strong>OpenCV</strong>: Open source computer vision library (BSD license) - free to use.</li>
                 <li><strong>Protothreads</strong>: Cornell ECE4760 library - provided for course use.</li>
             </ul>
         </div>
@@ -371,11 +362,6 @@ new_duty = current_duty + duty_change</pre>
                 <strong>draw_square.py</strong>: Generates square drawing pattern with curved rotations. Sends UDP 
                 commands continuously (every 50ms) to prevent packet loss. Uses turtle graphics for visualization 
                 with curved arc animations matching swerve drive behavior.
-            </p>
-            <p>
-                <strong>cv_tracker.py</strong>: Computer vision tracking using OpenCV. Detects white paper rectangle 
-                via thresholding and robot via HSV color filtering. Extracts four corners for both paper and robot. 
-                Uses homography to transform image coordinates to board coordinates.
             </p>
             
             <h3>Hardware Details</h3>
@@ -456,7 +442,7 @@ new_duty = current_duty + duty_change</pre>
                 <li>Power motors with appropriate battery pack (check voltage requirements)</li>
                 <li>Flash robot.uf2 to Pico W</li>
                 <li>Configure WiFi credentials in robot.c</li>
-                <li>Run Python scripts on host computer with camera connected</li>
+                <li>Run Python scripts on host computer</li>
             </ol>
             
             <h3>Code/Designs Borrowed from Others</h3>
@@ -464,7 +450,6 @@ new_duty = current_duty + duty_change</pre>
                 <li><strong>Protothreads Library</strong>: Cornell ECE4760 course library for cooperative multitasking</li>
                 <li><strong>Pico SDK</strong>: Raspberry Pi Pico SDK for hardware abstraction</li>
                 <li><strong>lwIP</strong>: Lightweight IP stack for WiFi communication</li>
-                <li><strong>OpenCV</strong>: Computer vision library for image processing</li>
                 <li><strong>Motor Control Math</strong>: Differential swerve kinematics based on standard robotics literature</li>
             </ul>
             
@@ -492,7 +477,7 @@ new_duty = current_duty + duty_change</pre>
                 <li>Code debugging and error diagnosis</li>
                 <li>Understanding PWM slice conflicts and pin mapping</li>
                 <li>Implementing differential swerve control algorithms</li>
-                <li>Writing Python control scripts and computer vision code</li>
+                <li>Writing Python control scripts</li>
                 <li>Creating HTML documentation structure</li>
             </ul>
             <p>
@@ -584,10 +569,9 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
             
             <h3>Design Analysis</h3>
             <p>
-                The project successfully met its primary goals: creating a mobile drawing robot with computer vision 
-                tracking and precise motor control. The swerve drive mechanism provides smooth, omnidirectional 
-                movement suitable for drawing curved paths. The closed-loop PID control maintains motor synchronization 
-                within acceptable tolerances.
+                The project successfully met its primary goals: creating a mobile drawing robot with precise motor control. 
+                The swerve drive mechanism provides smooth, omnidirectional movement suitable for drawing curved paths. 
+                The closed-loop PID control maintains motor synchronization within acceptable tolerances.
             </p>
             <p>
                 <strong>What Worked Well:</strong>
@@ -596,7 +580,6 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
                 <li>Protothreads provided clean concurrent task management</li>
                 <li>Open-loop startup eliminated initial lag</li>
                 <li>Rate limiting prevented motor overshoot</li>
-                <li>Computer vision successfully tracks both paper and robot</li>
                 <li>UDP communication is reliable with continuous sending</li>
             </ul>
             <p>
@@ -604,11 +587,10 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
             </p>
             <ul>
                 <li>Add full PID (integral and derivative terms) for better steady-state accuracy</li>
-                <li>Implement path following using computer vision feedback</li>
                 <li>Add pen up/down mechanism for actual drawing</li>
                 <li>Improve encoder reliability (some encoders occasionally read zero)</li>
                 <li>Add calibration routine for motor speed matching</li>
-                <li>Implement odometry for dead reckoning when vision is unavailable</li>
+                <li>Implement odometry for dead reckoning</li>
             </p>
             
             <h3>Standards Conformance</h3>
@@ -628,7 +610,6 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
                 <li><strong>Protothreads</strong>: Cornell ECE4760 course library - provided for educational use</li>
                 <li><strong>Pico SDK</strong>: Raspberry Pi SDK - open source (BSD license)</li>
                 <li><strong>lwIP</strong>: Lightweight IP stack - open source (BSD license)</li>
-                <li><strong>OpenCV</strong>: Computer vision library - open source (BSD license)</li>
                 <li><strong>Python Standard Library</strong>: socket, time, turtle - standard library, no restrictions</li>
             </ul>
             
@@ -637,8 +618,6 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
                 <li><strong>Differential Swerve Kinematics</strong>: Based on standard robotics literature and FIRST 
                     Robotics designs. General concepts are in public domain.</li>
                 <li><strong>PID Control</strong>: Standard control theory, widely published and in public domain.</li>
-                <li><strong>Homography Transformation</strong>: Standard computer vision technique, well-documented in 
-                    academic literature.</li>
             </ul>
             
             <h3>Public Domain Code</h3>
@@ -688,7 +667,6 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
             <ul>
                 <li><code>robot/robot.c</code> - Main embedded firmware (773 lines)</li>
                 <li><code>local_host/draw_square.py</code> - Square drawing script (164 lines)</li>
-                <li><code>local_host/cv_tracker.py</code> - Computer vision tracking (274 lines)</li>
                 <li><code>local_host/robot_instr.py</code> - Robot instruction interface (131 lines)</li>
                 <li><code>local_host/datasender.py</code> - UDP communication (63 lines)</li>
             </ul>
@@ -761,7 +739,6 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
                     <td>[Member 2 Name]</td>
                     <td>
                         <ul>
-                            <li>Computer vision implementation</li>
                             <li>UDP communication protocol</li>
                             <li>Python control scripts</li>
                         </ul>
@@ -808,14 +785,12 @@ Encoder deltas: A1=45 A2=-42 B1=43 B2=-44
             
             <h3>Background Sites/Papers</h3>
             <ul>
-                <li>OpenCV Documentation - <a href="https://docs.opencv.org/">https://docs.opencv.org/</a></li>
                 <li>Swerve Drive Kinematics - FIRST Robotics Competition Resources</li>
-                <li>Homography in Computer Vision - Multiple academic sources</li>
                 <li>PID Control Theory - Standard control systems textbooks</li>
             </ul>
         </div>
 
-        <div style="margin-top: 60px; padding-top: 20px; border-top: 2px solid #B31B1B; text-align: center; color: #666;">
+        <div style="margin-top: 60px; padding-top: 20px; border-top: 2px solid #1a5f1a; text-align: center; color: #666;">
             <p>Penny the Plotter - ECE4760 Final Project</p>
             <p>Cornell University - Spring 2024</p>
         </div>
